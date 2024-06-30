@@ -7,6 +7,7 @@ from utilities.timeout import time_limit, TimeoutException
 import utilities.entity_link as el
 import utilities.sparql_functions as sparql_f
 import utilities.emb_tasks as emb_tasks
+import re
 
 # Results storage
 results = dict()
@@ -35,16 +36,17 @@ print("LLM loaded")
 def evaluate_response(response, question_no, eval_no=0):
     # Extract entities from the response
     chat_ents = [{"role": "user",
-                  "content": f"Extract entities from the following sentence in python list format with no documentation:\n{response}"}]
+                  "content": f"Extract entities from the following sentence in python list format with square brackets with no documentation:\n{response}"}]
     prompt_ents = tokenizer.apply_chat_template(chat_ents, tokenize=False, add_generation_prompt=True)
     inputs_ents = tokenizer.encode(prompt_ents, add_special_tokens=False, return_tensors="pt")
-    ent_outputs = model.generate(input_ids=inputs_ents, max_new_tokens=150)
+    ent_outputs = model.generate(input_ids=inputs_ents, max_new_tokens=200)
     ent_decoded = tokenizer.decode(ent_outputs[0])
 
     # Print the entities response
-    # print(f"Entities decoded: {ent_decoded}")
+    print(f"Entities decoded: {ent_decoded}")
 
-    entities = ast.literal_eval(ent_decoded.split("```python\n")[1].split("\n```")[0].strip())
+    # entities = ast.literal_eval(ent_decoded.split("```python\n")[1].split("\n```")[0].strip())
+    entities = ast.literal_eval(re.findall(r'\[.*?\]', ent_decoded, re.DOTALL)[-1].strip())
     # Print the entities
     print(f"Entities: {entities}")
     results['results'][question_no][f'entities_{eval_no}'] = entities
@@ -55,7 +57,7 @@ def evaluate_response(response, question_no, eval_no=0):
     #                "content": f"Extract all (subject, predicate, object) facts from the following text in table format with no documentation:\n{response}"}]
     prompt_trips = tokenizer.apply_chat_template(chat_trips, tokenize=False, add_generation_prompt=True)
     inputs_trips = tokenizer.encode(prompt_trips, add_special_tokens=False, return_tensors="pt")
-    trip_outputs = model.generate(input_ids=inputs_trips, max_new_tokens=150)
+    trip_outputs = model.generate(input_ids=inputs_trips, max_new_tokens=200)
     trip_decoded = tokenizer.decode(trip_outputs[0])
 
     # Print the triples
@@ -105,7 +107,7 @@ def evaluate_response(response, question_no, eval_no=0):
     true_facts_uris = []
     true_facts_names = []
     true_entities = dict()
-    num_linked_facts = 0
+    # num_linked_facts = 0
 
     for j, (s, p, o) in enumerate(triples):
         print(f"Triple {j + 1}: {s}, {p}, {o}")
@@ -145,7 +147,7 @@ def evaluate_response(response, question_no, eval_no=0):
         best_fact_with_uris = None
         for pred_uri, pred_label in top_sim_predicates:
             for obj_uri, obj_label in sparql_results_dict[(pred_uri, pred_label)]:
-                sim_score = emb_tasks.calculate_cos_sim_multiple_emb(o, [obj_label]).item()
+                sim_score = emb_tasks.calculate_cos_sim_multiple_emb(f"{p} {o}", [f"{pred_label} {obj_label}"]).item()
                 if sim_score > best_sim_score:
                     best_sim_score = sim_score
                     best_fact_with_names = (s, pred_label, obj_label)
@@ -177,12 +179,12 @@ def evaluate_response(response, question_no, eval_no=0):
     print("Simple measure of truthfulness:", frac_true)
 
     # Perform fuzzy evaluation normalised by number of linked facts
-    if num_linked_facts > 0:
-        frac_true_linked = truth_scores_sum / num_linked_facts  # TODO: Fix this
-    else:
-        frac_true_linked = 0
+    # if num_linked_facts > 0:
+    #     frac_true_linked = truth_scores_sum / num_linked_facts  # TODO: Fix this
+    # else:
+    #     frac_true_linked = 0
 
-    print("Simple measure of truthfulness (linked facts):", frac_true_linked)
+    # print("Simple measure of truthfulness (linked facts):", frac_true_linked)
 
     # Calculate fraction of entities linked
     # TODO: Count number of entities in both entities and name_uri_map
@@ -202,14 +204,14 @@ def evaluate_response(response, question_no, eval_no=0):
 
     results['results'][question_no][f"truth_score_{eval_no}"] = truth_scores_sum
     results['results'][question_no][f"% true_{eval_no}"] = frac_true
-    results['results'][question_no][f"% true_linked_{eval_no}"] = frac_true_linked
+    # results['results'][question_no][f"% true_linked_{eval_no}"] = frac_true_linked
     results['results'][question_no][f"% linked_entities_{eval_no}"] = frac_linked_entities
     results['results'][question_no][f"true_facts_names_{eval_no}"] = true_facts_names
     results['results'][question_no][f"true_facts_uris_{eval_no}"] = true_facts_uris
     results['results'][question_no][f"true_entities_uris_{eval_no}"] = list(true_entities.keys())
     results['results'][question_no][f"true_entities_names_{eval_no}"] = list(true_entities.values())
 
-    return frac_true, frac_true_linked, frac_linked_entities, true_facts_names, true_facts_uris, true_entities, entities, name_uri_map
+    return frac_true, frac_linked_entities, true_facts_names, true_facts_uris, true_entities, entities, name_uri_map
 
 
 # Generate a response for each question
@@ -222,7 +224,7 @@ for q_no, item in enumerate(dataset):
 
     # Generate the response
     input_ids = tokenizer(question, return_tensors="pt")
-    outputs = model.generate(**input_ids, max_new_tokens=100)
+    outputs = model.generate(**input_ids, max_new_tokens=200)
     decoded = tokenizer.decode(outputs[0])
     response = decoded.split("<bos>")[1].split("<eos>")[0][len(question)+1:].strip()
 
@@ -234,9 +236,9 @@ for q_no, item in enumerate(dataset):
     results['results'][q_no]['response'] = response
 
     try:
-        with time_limit(900):
+        with time_limit(1500):
 
-            frac_true, frac_true_linked, frac_linked_entities, true_facts_names, true_facts_uris, \
+            frac_true, frac_linked_entities, true_facts_names, true_facts_uris, \
                 true_entities, entities, name_uri_map = evaluate_response(response, q_no, 0)
 
             if frac_true < 0.8:
@@ -246,9 +248,9 @@ for q_no, item in enumerate(dataset):
                 filtered_facts = []
 
                 # Combine true entities with entities extracted from question
-                focus_entities = set(true_entities.values()).union(entities)  # TODO: Change to just question entities
+                focus_entities = set(true_entities.values()).union(entities)
 
-                # Set intial expanded facts list to true facts
+                # Set initial expanded facts list to true facts
                 expanded_facts = true_facts_names
 
                 if len(focus_entities) > 0:
@@ -273,7 +275,7 @@ for q_no, item in enumerate(dataset):
                                 expansion_dict[(p_uri, p_label)] = []
                             expansion_dict[(p_uri, p_label)].append((o_uri, o_label))
 
-                        # Calculate similarity scores between question and each predicate in the SPARQL results
+                        # Calculate similarity scores between response and each predicate in the SPARQL results
                         # Get a list of all predicates uris and labels
                         pred_uris_labels = list(sorted(expansion_dict.keys()))
                         pred_labels = [pair[1] for pair in pred_uris_labels]
@@ -298,25 +300,27 @@ for q_no, item in enumerate(dataset):
                 expanded_facts_str_list = [f"{fact[0]} {fact[1]} {fact[2]}" for fact in expanded_facts]
                 # print("Expanded facts:", expanded_facts_str_list)
 
-                # Calculate similarity scores between question and each fact in the expanded facts
-                sim_scores_f = emb_tasks.calculate_cos_sim_multiple_emb(response, expanded_facts_str_list)
-                # Get the indices of the top 10 similarity scores
-                top_sim_indices_f = sim_scores_f.argsort()[-5:][::-1]
-                # Get the top 10 similarity scores
-                top_sim_scores_f = sim_scores_f[top_sim_indices_f]
-                # Get the top 10 expanded facts
-                top_sim_facts = [expanded_facts[i] for i in top_sim_indices_f]
+                expanded_facts_str = ""
+                if len(expanded_facts_str_list) > 0:
+                    # Calculate similarity scores between question and each fact in the expanded facts
+                    sim_scores_f = emb_tasks.calculate_cos_sim_multiple_emb(response, expanded_facts_str_list)
+                    # Get the indices of the top 10 similarity scores
+                    top_sim_indices_f = sim_scores_f.argsort()[-5:][::-1]
+                    # Get the top 10 similarity scores
+                    top_sim_scores_f = sim_scores_f[top_sim_indices_f]
+                    # Get the top 10 expanded facts
+                    top_sim_facts = [expanded_facts[i] for i in top_sim_indices_f]
 
-                # Convert top 10 expanded facts into string format
-                expanded_facts_str = " ".join([f"{fact[0]} {fact[1]} {fact[2]}." for fact in top_sim_facts])
+                    # Convert top 10 expanded facts into string format
+                    expanded_facts_str = " ".join([f"{fact[0]} {fact[1]} {fact[2]}." for fact in top_sim_facts])
+
                 print("Expanded facts:", expanded_facts_str)
                 results['results'][q_no]["expanded_facts"] = expanded_facts_str
 
                 # Generate a new response for the question
-                # TODO: Add the initial answer to the question
                 new_question = f"{expanded_facts_str}\nGiven the following text:\n{response}\nImprove the text based on the above context."
                 input_ids = tokenizer(new_question, return_tensors="pt")
-                outputs = model.generate(**input_ids, max_new_tokens=100)
+                outputs = model.generate(**input_ids, max_new_tokens=200)
                 decoded = tokenizer.decode(outputs[0])
                 enr_response = decoded.split("<bos>")[1].split("<eos>")[0][len(new_question)+1:].strip()
 
@@ -324,11 +328,11 @@ for q_no, item in enumerate(dataset):
                 print(f"Response: {enr_response}\n")
                 results['results'][q_no]['enriched_response'] = enr_response
 
-                new_frac_true, new_frac_true_linked, new_frac_linked_entities, new_true_facts_names, new_true_facts_uris, \
+                new_frac_true, new_frac_linked_entities, new_true_facts_names, new_true_facts_uris, \
                     new_true_entities, new_entities, new_name_uri_map = evaluate_response(enr_response, q_no, 1)
 
                 print("Fraction of true facts improved?", new_frac_true > frac_true)
-                print("Fraction of true linked facts improved?", new_frac_true_linked > frac_true_linked)
+                # print("Fraction of true linked facts improved?", new_frac_true_linked > frac_true_linked)
                 print("Fraction of linked entities improved?", new_frac_linked_entities > frac_linked_entities)
 
                 # Write results to text file
@@ -336,23 +340,21 @@ for q_no, item in enumerate(dataset):
                     f.write(f"Question {q_no+1}\n")
                     f.write(f"Original Response: {results['results'][q_no]['response']}\n")
                     f.write(f"Original Fraction of True Facts: {frac_true}\n")
-                    f.write(f"Original Fraction of True Linked Facts: {frac_true_linked}\n")
+                    # f.write(f"Original Fraction of True Linked Facts: {frac_true_linked}\n")
                     f.write(f"Original Fraction of Linked Entities: {frac_linked_entities}\n")
-                    # f.write(f"Original True Facts: {results['results'][q_no]['true_facts_names_0']}\n")
-                    # f.write(f"Original True Entities: {results['results'][q_no]['true_entities_names_0']}\n")
+
                     f.write(f"Expanded Facts: {expanded_facts_str}\n")
+
                     f.write(f"Enriched Response: {results['results'][q_no]['enriched_response']}\n")
                     f.write(f"Enriched Fraction of True Facts: {new_frac_true}\n")
-                    f.write(f"Enriched Fraction of True Linked Facts: {new_frac_true_linked}\n")
+                    # f.write(f"Enriched Fraction of True Linked Facts: {new_frac_true_linked}\n")
                     f.write(f"Enriched Fraction of Linked Entities: {new_frac_linked_entities}\n")
-                    # f.write(f"Enriched True Facts: {results['results'][q_no]['true_facts_names_1']}\n")
-                    # f.write(f"Enriched True Entities: {results['results'][q_no]['true_entities_names_1']}\n")
                     f.write(f"Fraction of true facts improved? {new_frac_true > frac_true}\n")
-                    f.write(f"Fraction of true linked facts improved? {new_frac_true_linked > frac_true_linked}\n")
+                    # f.write(f"Fraction of true linked facts improved? {new_frac_true_linked > frac_true_linked}\n")
                     f.write(f"Fraction of linked entities improved? {new_frac_linked_entities > frac_linked_entities}\n\n")
 
                 results['results'][q_no]["frac_true_better?"] = new_frac_true > frac_true
-                results['results'][q_no]["frac_true_linked_better?"] = new_frac_true_linked > frac_true_linked
+                # results['results'][q_no]["frac_true_linked_better?"] = new_frac_true_linked > frac_true_linked
                 results['results'][q_no]["frac_linked_entities_better?"] = new_frac_linked_entities > frac_linked_entities
 
                 # Save the results to json file
