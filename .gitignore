@@ -1,5 +1,5 @@
 /output/
-!/output/factum_wikiqa_results.json
+!output/factum_wikiqa_results.json
 /framework/model_with_elementwise_evaluation.py
 /framework/model_with_improved_evaluation.py
 /framework/factum.py
@@ -8,5 +8,5 @@
 /framework/utilities/__pycache__/
 /.idea/
 /data/
-!/data/WikiQA-questions-sample.txt
+!data/WikiQA-questions-sample.txt
 /analysis/fact_score_diff.py
